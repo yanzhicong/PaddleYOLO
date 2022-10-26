@@ -74,7 +74,7 @@ class PPYOLOEHead_with_ProbIoU(nn.Layer):
                  trt=False,
                  exclude_nms=False,
                  exclude_post_process=False):
-        super(PPYOLOEHead, self).__init__()
+        super(PPYOLOEHead_with_ProbIoU, self).__init__()
         assert len(in_channels) > 0, "len(in_channels) should > 0"
         self.in_channels = in_channels
         self.num_classes = num_classes
