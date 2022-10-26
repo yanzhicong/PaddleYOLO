@@ -1,0 +1,20 @@
+_BASE_: [
+  './sku110k.yml',
+  './runtime.yml',
+  './_base_/optimizer_300e.yml',
+  './_base_/ppyoloe_crn.yml',
+  './_base_/ppyoloe_reader.yml',
+]
+
+
+log_iter: 10
+snapshot_epoch: 10
+weights: sku110_output/ppyoloe_crn_s_300e_coco/model_final
+
+
+pretrain_weights: https://paddledet.bj.bcebos.com/models/pretrained/CSPResNetb_s_pretrained.pdparams
+depth_mult: 0.33
+width_mult: 0.50
+
+
+
