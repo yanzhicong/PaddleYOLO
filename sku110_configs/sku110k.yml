@@ -14,11 +14,8 @@ EvalDataset:
     anno_path: json_annotations/annotations_val.json
     dataset_dir: /workspace/dataset/SKU110K_fixed
 
-
 TestDataset:
-  !ImageFolder
+  !COCODataSet
+    image_dir: images
     anno_path: json_annotations/annotations_test.json # also support txt (like VOC's label_list.txt)
     dataset_dir: /workspace/dataset/SKU110K_fixed # if set, anno_path will be 'dataset_dir/anno_path'
-
-
-
