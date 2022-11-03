@@ -363,7 +363,8 @@ class PPYOLOEL1Head(nn.Layer):
                             assigned_scores_sum)
         loss = self.loss_weight['class'] * loss_cls + \
                self.loss_weight['iou'] * loss_iou + \
-               self.loss_weight['dfl'] * loss_dfl
+               self.loss_weight['dfl'] * loss_dfl + \
+               self.loss_weight['l1'] * loss_l1
         out_dict = {
             'loss': loss,
             'loss_cls': loss_cls,

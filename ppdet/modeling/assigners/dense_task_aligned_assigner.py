@@ -109,7 +109,7 @@ class DenseTaskAlignedAssigner(nn.Layer):
             self.beta)
 
         # check the positive sample's center in gt, [B, n, L]
-        in_gt_or_centers, in_gt_and_centers = check_points_inside_bboxes(anchor_points, gt_bboxes, stride_tensor * self.center_radius)
+        in_gt_and_centers, in_gt_or_centers = check_points_inside_bboxes(anchor_points, gt_bboxes, stride_tensor * self.center_radius)
         candidate_matrics = paddle.where(in_gt_or_centers, alignment_metrics, alignment_metrics - 1)
 
         # select topk largest alignment metrics pred bbox as candidates
