@@ -20,7 +20,7 @@ def find_and_print_result(file_path):
     result_dict = {}
     with open(file_path, 'r') as infile:
         for line in infile:
-            if line.startswith(" Average Precision  (AP) @[ IoU") and line.find("area=   all") != -1:
+            if (line.startswith(" Average Precision  (AP) @[ IoU") or line.startswith(" Average Recall     (AR)")) and line.find("area=   all") != -1:
                 key, value = line.strip().split(" = ")
                 key, value = key.strip(), float(value.strip())
                 # result_dict[key] = result_dict.get(key, []).append(value)
@@ -43,7 +43,11 @@ if __name__ == "__main__":
         for file_name in [
             "workerlog.0",
             "eval_result.txt",
+            "large_size_eval_result.txt",
+            "large_large_size_eval_result.txt",
             "test_result.txt",
+            "large_size_test_result.txt",
+            "large_large_size_test_result.txt",
         ]:
 
             result_path = os.path.join(experiment_dir, exp_name, file_name)

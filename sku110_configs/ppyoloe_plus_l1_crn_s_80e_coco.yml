@@ -5,9 +5,11 @@ _BASE_: [
   './_base_/ppyoloe_plus_reader.yml',
 ]
 
+
+
 log_iter: 10
-snapshot_epoch: 20
-weights: sku110_output/ppyoloe_plus_crn_s_80e_coco/model_final
+snapshot_epoch: 40
+weights: sku110_output/ppyoloe_plus_l1_crn_s_80e_coco/model_final
 
 pretrain_weights: https://bj.bcebos.com/v1/paddledet/models/pretrained/ppyoloe_crn_s_obj365_pretrained.pdparams
 depth_mult: 0.33
@@ -20,10 +22,12 @@ use_ema: true
 ema_decay: 0.9998
 custom_black_list: ['reduce_mean']
 
+
+
 YOLOv3:
   backbone: CSPResNet
   neck: CustomCSPPAN
-  yolo_head: PPYOLOEHead
+  yolo_head: PPYOLOEL1Head
   post_process: ~
 
 CSPResNet:
@@ -40,7 +44,8 @@ CustomCSPPAN:
   act: 'swish'
   spp: true
 
-PPYOLOEHead:
+
+PPYOLOEL1Head:
   fpn_strides: [32, 16, 8]
   grid_cell_scale: 5.0
   grid_cell_offset: 0.5
@@ -61,3 +66,7 @@ PPYOLOEHead:
     keep_top_k: 1000
     score_threshold: 0.01
     nms_threshold: 0.7
+
+
+
+

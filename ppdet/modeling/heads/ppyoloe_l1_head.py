@@ -69,6 +69,7 @@ class PPYOLOEL1Head(nn.Layer):
                      'class': 1.0,
                      'iou': 2.5,
                      'dfl': 0.5,
+                     'l1': 1.0,
                  },
                  trt=False,
                  exclude_nms=False,
@@ -140,6 +141,7 @@ class PPYOLOEL1Head(nn.Layer):
             self.anchor_points = anchor_points
             self.stride_tensor = stride_tensor
 
+
     def forward_train(self, feats, targets):
         anchors, anchor_points, num_anchors_list, stride_tensor = \
             generate_anchors_for_grid_cell(
@@ -163,6 +165,7 @@ class PPYOLOEL1Head(nn.Layer):
             cls_score_list, reg_distri_list, anchors, anchor_points,
             num_anchors_list, stride_tensor
         ], targets)
+
 
     def _generate_anchors(self, feats=None, dtype='float32'):
         # just use in eval time
