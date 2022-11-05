@@ -41,6 +41,7 @@ CustomCSPPAN:
   act: 'swish'
   spp: true
 
+
 PPYOLOEDenseHead:
   fpn_strides: [32, 16, 8]
   grid_cell_scale: 5.0
@@ -56,7 +57,7 @@ PPYOLOEDenseHead:
     topk: 13
     alpha: 1.0
     beta: 6.0
-    center_radius: 1.5 # need rune center radius
+    center_radius: 1.0 # need rune center radius
   nms:
     name: MultiClassNMS
     nms_top_k: 3000

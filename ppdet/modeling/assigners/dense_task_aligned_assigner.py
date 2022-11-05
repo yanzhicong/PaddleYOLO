@@ -108,17 +108,42 @@ class DenseTaskAlignedAssigner(nn.Layer):
         alignment_metrics = bbox_cls_scores.pow(self.alpha) * ious.pow(
             self.beta)
 
+
+
+        #######################################################
+        #######################################################
+        #######################################################
         # check the positive sample's center in gt, [B, n, L]
-        in_gt_and_centers, in_gt_or_centers = check_points_inside_bboxes(anchor_points, gt_bboxes, stride_tensor * self.center_radius)
-        candidate_matrics = paddle.where(in_gt_or_centers, alignment_metrics, alignment_metrics - 1)
+        # in_gt_and_centers, in_gt_or_centers = check_points_inside_bboxes(anchor_points, gt_bboxes, stride_tensor * self.center_radius)
+        # candidate_matrics = paddle.where(in_gt_or_centers, alignment_metrics, alignment_metrics - 1)
+
+        # # select topk largest alignment metrics pred bbox as candidates
+        # # for each gt, [B, n, L]
+        # is_in_topk = gather_topk_anchors(
+        #     candidate_matrics, self.topk, topk_mask=pad_gt_mask)
+
+        # # select positive sample, [B, n, L]
+        # mask_positive = is_in_topk * pad_gt_mask
+        #######################################################
+        #######################################################
+        #######################################################
+        # check the positive sample's center in gt, [B, n, L]
+        _, in_gt_or_centers = check_points_inside_bboxes(anchor_points, gt_bboxes, stride_tensor * self.center_radius)
+        candidate_matrics = paddle.where(in_gt_or_centers, alignment_metrics, paddle.zeros_like(alignment_metrics))
 
         # select topk largest alignment metrics pred bbox as candidates
         # for each gt, [B, n, L]
-        is_in_topk = gather_topk_anchors(
-            candidate_matrics, self.topk, topk_mask=pad_gt_mask)
+        is_in_topk = gather_topk_anchors(candidate_matrics, self.topk, topk_mask=pad_gt_mask)
 
         # select positive sample, [B, n, L]
-        mask_positive = is_in_topk * pad_gt_mask
+        mask_positive = is_in_topk * in_gt_or_centers * pad_gt_mask
+        #######################################################
+        #######################################################
+        #######################################################
+
+
+
+
 
         # if an anchor box is assigned to multiple gts,
         # the one with the highest iou will be selected, [B, n, L]
