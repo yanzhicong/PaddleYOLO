@@ -70,7 +70,9 @@ class PPYOLOEL1Head(nn.Layer):
                      'iou': 2.5,
                      'dfl': 0.5,
                      'l1': 1.0,
+                     'l2': 0.0,
                  },
+                 
                  trt=False,
                  exclude_nms=False,
                  exclude_post_process=False):
@@ -286,6 +288,8 @@ class PPYOLOEL1Head(nn.Layer):
             gcenter = (gx1y1 + gx2y2) * 0.5
             # loss_l1 = F.l1_loss(pred_bboxes_pos, assigned_bboxes_pos)
             loss_l1 = F.l1_loss(pcenter, gcenter)
+            loss_l2 = F.mse_loss(pcenter, gcenter)
+    
 
             loss_iou = self.iou_loss(pred_bboxes_pos,
                                      assigned_bboxes_pos) * bbox_weight
@@ -305,7 +309,9 @@ class PPYOLOEL1Head(nn.Layer):
             loss_l1 = paddle.zeros([1])
             loss_iou = paddle.zeros([1])
             loss_dfl = pred_dist.sum() * 0.
-        return loss_l1, loss_iou, loss_dfl
+        return loss_l1, loss_l2, loss_iou, loss_dfl
+
+
 
     def get_loss(self, head_outs, gt_meta):
         pred_scores, pred_distri, anchors,\
@@ -360,20 +366,22 @@ class PPYOLOEL1Head(nn.Layer):
                 min=1)
         loss_cls /= assigned_scores_sum
 
-        loss_l1, loss_iou, loss_dfl = \
+        loss_l1, loss_l2, loss_iou, loss_dfl = \
             self._bbox_loss(pred_distri, pred_bboxes, anchor_points_s,
                             assigned_labels, assigned_bboxes, assigned_scores,
                             assigned_scores_sum)
         loss = self.loss_weight['class'] * loss_cls + \
                self.loss_weight['iou'] * loss_iou + \
                self.loss_weight['dfl'] * loss_dfl + \
-               self.loss_weight['l1'] * loss_l1
+               self.loss_weight['l1'] * loss_l1 + \
+               self.loss_weight['l2'] * loss_l2
         out_dict = {
             'loss': loss,
             'loss_cls': loss_cls,
             'loss_iou': loss_iou,
             'loss_dfl': loss_dfl,
             'loss_l1': loss_l1,
+            'loss_l2': loss_l2,
         }
         return out_dict
 

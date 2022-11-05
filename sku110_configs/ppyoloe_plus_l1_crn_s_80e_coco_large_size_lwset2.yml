@@ -2,14 +2,14 @@ _BASE_: [
   './sku110k.yml',
   './runtime.yml',
   './_base_/optimizer_80e.yml',
-  './_base_/ppyoloe_plus_reader.yml',
+  './_base_/ppyoloe_plus_reader_large_size.yml',
 ]
 
 
 
 log_iter: 10
 snapshot_epoch: 40
-weights: sku110_output/ppyoloe_plus_l1_crn_s_80e_coco/model_final
+weights: sku110_output/ppyoloe_plus_l1_crn_s_80e_coco_large_size/model_final
 
 pretrain_weights: https://bj.bcebos.com/v1/paddledet/models/pretrained/ppyoloe_crn_s_obj365_pretrained.pdparams
 depth_mult: 0.33
@@ -44,14 +44,13 @@ CustomCSPPAN:
   act: 'swish'
   spp: true
 
-
 PPYOLOEL1Head:
   fpn_strides: [32, 16, 8]
   grid_cell_scale: 5.0
   grid_cell_offset: 0.5
   static_assigner_epoch: -1
   use_varifocal_loss: True
-  loss_weight: {class: 1.0, iou: 2.5, dfl: 0.5, l1: 1.0, l2: 0.0} # need tune l1
+  loss_weight: {class: 1.0, iou: 2.5, dfl: 0.5, l1: 0.0, l2: 1.0} # need tune l1
   static_assigner:
     name: ATSSAssigner
     topk: 9
