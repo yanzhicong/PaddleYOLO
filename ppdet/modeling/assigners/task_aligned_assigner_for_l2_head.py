@@ -27,20 +27,23 @@ from ..bbox_utils import batch_iou_similarity
 from .utils import (gather_topk_anchors, check_points_inside_bboxes,
                     compute_max_iou_anchor)
 
-__all__ = ['TaskAlignedAssigner']
+__all__ = ['TaskAlignedAssignerForL2Head']
 
 
 @register
-class TaskAlignedAssigner(nn.Layer):
+class TaskAlignedAssignerForL2Head(nn.Layer):
     """TOOD: Task-aligned One-stage Object Detection
     """
 
     def __init__(self, topk=13, alpha=1.0, beta=6.0, eps=1e-9):
-        super(TaskAlignedAssigner, self).__init__()
+        super(TaskAlignedAssignerForL2Head, self).__init__()
         self.topk = topk
         self.alpha = alpha
         self.beta = beta
         self.eps = eps
+
+
+
 
     @paddle.no_grad()
     def forward(self,
@@ -119,6 +122,8 @@ class TaskAlignedAssigner(nn.Layer):
         # select positive sample, [B, n, L]
         mask_positive = is_in_topk * is_in_gts * pad_gt_mask
 
+
+
         # if an anchor box is assigned to multiple gts,
         # the one with the highest iou will be selected, [B, n, L]
         mask_positive_sum = mask_positive.sum(axis=-2)
@@ -131,18 +136,36 @@ class TaskAlignedAssigner(nn.Layer):
             mask_positive_sum = mask_positive.sum(axis=-2)
         assigned_gt_index = mask_positive.argmax(axis=-2)
 
+
+        # mask_positive : [B, N_gt, L]
+
+        # predicted_bboxes : [B, L, 4]
+
+        # for each ground truth, compute the mean predict bboxes of its positive anchor points
+        # mean_predict_wrt_gt = (mask_positive.unsqueeze(-1) * pred_bboxes.unsqueeze(1)).mean(axis=2)
+
+        mean_predict_wrt_gt = (mask_positive.unsqueeze(-1) * pred_bboxes.unsqueeze(1)).sum(axis=2)
+        # mean_predict_wrt_gt : [B, N_gt, 4]
+        mean_predict_wrt_gt = mean_predict_wrt_gt / (mask_positive.sum(axis=2, keepdim=True) + 1e-6)
+
+
         # assigned target
         assigned_gt_index = assigned_gt_index + batch_ind * num_max_boxes
-        assigned_labels = paddle.gather(
-            gt_labels.flatten(), assigned_gt_index.flatten(), axis=0)
-        assigned_labels = assigned_labels.reshape([batch_size, num_anchors])
-        assigned_labels = paddle.where(
-            mask_positive_sum > 0, assigned_labels,
-            paddle.full_like(assigned_labels, bg_index))
 
-        assigned_bboxes = paddle.gather(
-            gt_bboxes.reshape([-1, 4]), assigned_gt_index.flatten(), axis=0)
+        assigned_labels = paddle.gather(gt_labels.flatten(), assigned_gt_index.flatten(), axis=0)
+        assigned_labels = assigned_labels.reshape([batch_size, num_anchors])
+        assigned_labels = paddle.where(mask_positive_sum > 0, assigned_labels, paddle.full_like(assigned_labels, bg_index))
+
+
+        
+        assigned_bboxes = paddle.gather(gt_bboxes.reshape([-1, 4]), assigned_gt_index.flatten(), axis=0)
         assigned_bboxes = assigned_bboxes.reshape([batch_size, num_anchors, 4])
+
+        assigned_pred_bboxes = paddle.gather(mean_predict_wrt_gt.reshape([-1, 4]), assigned_gt_index.flatten(), axis=0)
+        assigned_pred_bboxes = assigned_pred_bboxes.reshape([batch_size, num_anchors, 4]).detach()
+
+
+
 
         assigned_scores = F.one_hot(assigned_labels, num_classes + 1)
         ind = list(range(num_classes + 1))
@@ -159,7 +182,15 @@ class TaskAlignedAssigner(nn.Layer):
         alignment_metrics = alignment_metrics.max(-2).unsqueeze(-1)
         assigned_scores = assigned_scores * alignment_metrics
 
-        return assigned_labels, assigned_bboxes, assigned_scores
+        return assigned_labels, assigned_bboxes, assigned_pred_bboxes, assigned_scores
+
+
+
+
+
+
+
+
 
 
 
@@ -238,10 +269,8 @@ class TaskAlignedAssigner(nn.Layer):
 
 
 
-
         # compute alignment metrics, [B, n, L]
         alignment_metrics = bbox_cls_scores.pow(self.alpha) * ious.pow(self.beta)
-
 
 
 

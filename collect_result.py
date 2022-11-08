@@ -52,8 +52,10 @@ def find_and_print_result(file_path):
 
 if __name__ == "__main__":
 
+    exp_name_list = os.listdir(experiment_dir)
+    exp_name_list = sorted(exp_name_list)
 
-    for exp_name in os.listdir(experiment_dir):
+    for exp_name in exp_name_list:
 
         for file_name in [
             "workerlog.0",

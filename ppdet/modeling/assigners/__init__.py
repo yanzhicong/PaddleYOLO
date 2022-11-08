@@ -16,10 +16,18 @@ from . import utils
 from . import task_aligned_assigner
 from . import atss_assigner
 from . import simota_assigner
+from . import dense_task_aligned_assigner_xinxin
 from . import dense_task_aligned_assigner
+from . import task_aligned_assigner_for_l2_head
+from . import task_aligned_double_assigner
+
 
 from .utils import *
 from .task_aligned_assigner import *
 from .atss_assigner import *
 from .simota_assigner import *
+from .dense_task_aligned_assigner_xinxin import *
 from .dense_task_aligned_assigner import *
+from .task_aligned_assigner_for_l2_head import *
+from .task_aligned_double_assigner import *
+

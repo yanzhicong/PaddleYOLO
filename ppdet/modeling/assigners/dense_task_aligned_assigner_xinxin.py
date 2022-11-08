@@ -27,19 +27,17 @@ from ..bbox_utils import batch_iou_similarity
 from .utils import (gather_topk_anchors, check_points_inside_bboxes,
                     compute_max_iou_anchor)
 
-__all__ = ['DenseTaskAlignedAssigner']
+__all__ = ['DenseTaskAlignedAssignerXX']
 
 
 @register
-class DenseTaskAlignedAssigner(nn.Layer):
+class DenseTaskAlignedAssignerXX(nn.Layer):
     """TOOD: Task-aligned One-stage Object Detection
     """
 
-    def __init__(self, strict_topk=5, loose_topk=13, alpha=1.0, beta=6.0, center_radius=1.5, eps=1e-9):
-        super(DenseTaskAlignedAssigner
-    , self).__init__()
-        self.strict_topk = strict_topk
-        self.loose_topk = loose_topk
+    def __init__(self, topk=13, alpha=1.0, beta=6.0, center_radius=1.5, eps=1e-9):
+        super(DenseTaskAlignedAssignerXX, self).__init__()
+        self.topk = topk
         self.alpha = alpha
         self.beta = beta
         self.center_radius = center_radius
@@ -145,19 +143,17 @@ class DenseTaskAlignedAssigner(nn.Layer):
 
         # check the positive sample's center in gt, [B, n, L]
         _, in_gt_or_centers = check_points_inside_bboxes(anchor_points, gt_bboxes, stride_tensor * self.center_radius)
+
         # candidate_matrics = paddle.where(in_gt_or_centers, alignment_metrics, paddle.zeros_like(alignment_metrics))
+
         candidate_matrics = alignment_metrics * in_gt_or_centers
 
         # select topk largest alignment metrics pred bbox as candidates
         # for each gt, [B, n, L]
-        # is_in_topk = gather_topk_anchors(candidate_matrics, self.topk, topk_mask=pad_gt_mask)
-        gather_topk_input = alignment_metrics * in_gt_or_centers
-        is_in_loose_topk = gather_topk_anchors(gather_topk_input, self.loose_topk, topk_mask=pad_gt_mask)
-        is_in_strict_topk = gather_topk_anchors(gather_topk_input, self.strict_topk, topk_mask=pad_gt_mask)
+        is_in_topk = gather_topk_anchors(candidate_matrics, self.topk, topk_mask=pad_gt_mask)
 
         # select positive sample, [B, n, L]
-        mask_positive = is_in_loose_topk * in_gt_or_centers * pad_gt_mask
-        mask_positive_strict = is_in_strict_topk * in_gt_or_centers * pad_gt_mask
+        mask_positive = is_in_topk * in_gt_or_centers * pad_gt_mask
         #######################################################
         #######################################################
         #######################################################
@@ -173,11 +169,10 @@ class DenseTaskAlignedAssigner(nn.Layer):
             mask_positive = paddle.where(mask_multiple_gts, is_max_iou,
                                          mask_positive)
             mask_positive_sum = mask_positive.sum(axis=-2)
-        
+        assigned_gt_index = mask_positive.argmax(axis=-2)
 
 
         # assigned target
-        assigned_gt_index = mask_positive.argmax(axis=-2)
         assigned_gt_index = assigned_gt_index + batch_ind * num_max_boxes
         assigned_labels = paddle.gather(
             gt_labels.flatten(), assigned_gt_index.flatten(), axis=0)
@@ -186,31 +181,9 @@ class DenseTaskAlignedAssigner(nn.Layer):
             mask_positive_sum > 0, assigned_labels,
             paddle.full_like(assigned_labels, bg_index))
 
-
-        mask_positive_strict_sum = mask_positive_strict.sum(axis=-2)
-        if mask_positive_strict_sum.max() > 1:
-            mask_multiple_gts = (mask_positive_strict_sum.unsqueeze(1) > 1).tile(
-                [1, num_max_boxes, 1])
-            is_max_iou = compute_max_iou_anchor(ious)
-            mask_positive_strict = paddle.where(mask_multiple_gts, is_max_iou,
-                                         mask_positive_strict)
-            mask_positive_strict_sum = mask_positive_strict.sum(axis=-2)
-
-        # assigned target
-        strict_assigned_gt_ind = mask_positive_strict.argmax(axis=-2)
-        strict_assigned_gt_ind = strict_assigned_gt_ind + batch_ind * num_max_boxes
-        strict_assigned_labels = paddle.gather(gt_labels.flatten(), strict_assigned_gt_ind.flatten(), axis=0)
-        strict_assigned_labels = strict_assigned_labels.reshape([batch_size, num_anchors])
-        strict_assigned_labels = paddle.where(mask_positive_strict_sum > 0, 
-            strict_assigned_labels, paddle.full_like(strict_assigned_labels, bg_index))
-
-
-
         assigned_bboxes = paddle.gather(
             gt_bboxes.reshape([-1, 4]), assigned_gt_index.flatten(), axis=0)
         assigned_bboxes = assigned_bboxes.reshape([batch_size, num_anchors, 4])
-
-
 
         assigned_scores = F.one_hot(assigned_labels, num_classes + 1)
         ind = list(range(num_classes + 1))
@@ -227,4 +200,4 @@ class DenseTaskAlignedAssigner(nn.Layer):
         alignment_metrics = alignment_metrics.max(-2).unsqueeze(-1)
         assigned_scores = assigned_scores * alignment_metrics
 
-        return strict_assigned_labels, assigned_labels, assigned_bboxes, assigned_scores
+        return assigned_labels, assigned_bboxes, assigned_scores

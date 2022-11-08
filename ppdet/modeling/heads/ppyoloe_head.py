@@ -17,6 +17,8 @@ import paddle.nn as nn
 import paddle.nn.functional as F
 from ppdet.core.workspace import register
 
+import numpy as np
+
 from ..bbox_utils import batch_distance2bbox
 from ..losses import GIoULoss
 from ..initializer import bias_init_with_prob, constant_, normal_
@@ -26,6 +28,12 @@ from ppdet.modeling.ops import get_static_shape, get_act_fn
 from ppdet.modeling.layers import MultiClassNMS
 
 __all__ = ['PPYOLOEHead']
+
+
+
+
+
+
 
 
 class ESEAttn(nn.Layer):
@@ -73,6 +81,8 @@ class PPYOLOEHead(nn.Layer):
                  trt=False,
                  exclude_nms=False,
                  exclude_post_process=False):
+
+                 
         super(PPYOLOEHead, self).__init__()
         assert len(in_channels) > 0, "len(in_channels) should > 0"
         self.in_channels = in_channels
@@ -99,7 +109,7 @@ class PPYOLOEHead(nn.Layer):
         self.stem_reg = nn.LayerList()
         act = get_act_fn(
             act, trt=trt) if act is None or isinstance(act,
-                                                       (str, dict)) else act
+                                                       (str, dict)) else act     
         for in_c in self.in_channels:
             self.stem_cls.append(ESEAttn(in_c, act=act))
             self.stem_reg.append(ESEAttn(in_c, act=act))
@@ -118,9 +128,13 @@ class PPYOLOEHead(nn.Layer):
         self.proj_conv.skip_quant = True
         self._init_weights()
 
+
+
     @classmethod
     def from_config(cls, cfg, input_shape):
         return {'in_channels': [i.channels for i in input_shape], }
+
+
 
     def _init_weights(self):
         bias_cls = bias_init_with_prob(0.01)
@@ -149,13 +163,12 @@ class PPYOLOEHead(nn.Layer):
         cls_score_list, reg_distri_list = [], []
         for i, feat in enumerate(feats):
             avg_feat = F.adaptive_avg_pool2d(feat, (1, 1))
-            cls_logit = self.pred_cls[i](self.stem_cls[i](feat, avg_feat) +
-                                         feat)
+            cls_logit = self.pred_cls[i](self.stem_cls[i](feat, avg_feat) + feat)
             reg_distri = self.pred_reg[i](self.stem_reg[i](feat, avg_feat))
             # cls and reg
             cls_score = F.sigmoid(cls_logit)
             cls_score_list.append(cls_score.flatten(2).transpose([0, 2, 1]))
-            reg_distri_list.append(reg_distri.flatten(2).transpose([0, 2, 1]))
+            reg_distri_list.append(reg_distri.flatten(2).transpose([0, 2, 1]))    
         cls_score_list = paddle.concat(cls_score_list, axis=1)
         reg_distri_list = paddle.concat(reg_distri_list, axis=1)
 
@@ -227,16 +240,18 @@ class PPYOLOEHead(nn.Layer):
         if alpha > 0:
             alpha_t = alpha * label + (1 - alpha) * (1 - label)
             weight *= alpha_t
-        loss = F.binary_cross_entropy(
-            score, label, weight=weight, reduction='sum')
+        loss = F.binary_cross_entropy(score, label, weight=weight, reduction='sum')
         return loss
+
+
 
     @staticmethod
     def _varifocal_loss(pred_score, gt_score, label, alpha=0.75, gamma=2.0):
         weight = alpha * pred_score.pow(gamma) * (1 - label) + gt_score * label
-        loss = F.binary_cross_entropy(
-            pred_score, gt_score, weight=weight, reduction='sum')
+        loss = F.binary_cross_entropy(pred_score, gt_score, weight=weight, reduction='sum')
         return loss
+
+
 
     def _bbox_decode(self, anchor_points, pred_dist):
         b, l, _ = get_static_shape(pred_dist)
@@ -244,11 +259,16 @@ class PPYOLOEHead(nn.Layer):
                                                  ])).matmul(self.proj)
         return batch_distance2bbox(anchor_points, pred_dist)
 
+
+
     def _bbox2distance(self, points, bbox):
         x1y1, x2y2 = paddle.split(bbox, 2, -1)
         lt = points - x1y1
         rb = x2y2 - points
         return paddle.concat([lt, rb], -1).clip(0, self.reg_max - 0.01)
+
+
+
 
     def _df_loss(self, pred_dist, target):
         target_left = paddle.cast(target, 'int64')
@@ -260,6 +280,7 @@ class PPYOLOEHead(nn.Layer):
         loss_right = F.cross_entropy(
             pred_dist, target_right, reduction='none') * weight_right
         return (loss_left + loss_right).mean(-1, keepdim=True)
+
 
     def _bbox_loss(self, pred_dist, pred_bboxes, anchor_points, assigned_labels,
                    assigned_bboxes, assigned_scores, assigned_scores_sum):
@@ -299,6 +320,8 @@ class PPYOLOEHead(nn.Layer):
             loss_dfl = pred_dist.sum() * 0.
         return loss_l1, loss_iou, loss_dfl
 
+
+
     def get_loss(self, head_outs, gt_meta):
         pred_scores, pred_distri, anchors,\
         anchor_points, num_anchors_list, stride_tensor = head_outs
@@ -324,23 +347,21 @@ class PPYOLOEHead(nn.Layer):
         else:
             assigned_labels, assigned_bboxes, assigned_scores = \
                 self.assigner(
-                pred_scores.detach(),
-                pred_bboxes.detach() * stride_tensor,
-                anchor_points,
-                num_anchors_list,
-                gt_labels,
-                gt_bboxes,
-                pad_gt_mask,
-                bg_index=self.num_classes)
+                    pred_scores.detach(),
+                    pred_bboxes.detach() * stride_tensor,
+                    anchor_points,
+                    num_anchors_list,
+                    gt_labels,
+                    gt_bboxes,
+                    pad_gt_mask,
+                    bg_index=self.num_classes)
             alpha_l = -1
         # rescale bbox
         assigned_bboxes /= stride_tensor
         # cls loss
         if self.use_varifocal_loss:
-            one_hot_label = F.one_hot(assigned_labels,
-                                      self.num_classes + 1)[..., :-1]
-            loss_cls = self._varifocal_loss(pred_scores, assigned_scores,
-                                            one_hot_label)
+            one_hot_label = F.one_hot(assigned_labels, self.num_classes + 1)[..., :-1]
+            loss_cls = self._varifocal_loss(pred_scores, assigned_scores, one_hot_label)
         else:
             loss_cls = self._focal_loss(pred_scores, assigned_scores, alpha_l)
 
@@ -352,10 +373,10 @@ class PPYOLOEHead(nn.Layer):
                 min=1)
         loss_cls /= assigned_scores_sum
 
-        loss_l1, loss_iou, loss_dfl = \
-            self._bbox_loss(pred_distri, pred_bboxes, anchor_points_s,
-                            assigned_labels, assigned_bboxes, assigned_scores,
-                            assigned_scores_sum)
+        loss_l1, loss_iou, loss_dfl = self._bbox_loss(
+                pred_distri, pred_bboxes, anchor_points_s,
+                assigned_labels, assigned_bboxes, assigned_scores,
+                assigned_scores_sum)
         loss = self.loss_weight['class'] * loss_cls + \
                self.loss_weight['iou'] * loss_iou + \
                self.loss_weight['dfl'] * loss_dfl
@@ -367,6 +388,8 @@ class PPYOLOEHead(nn.Layer):
             'loss_l1': loss_l1,
         }
         return out_dict
+
+
 
     def post_process(self, head_outs, scale_factor):
         pred_scores, pred_dist, anchor_points, stride_tensor = head_outs
@@ -389,3 +412,274 @@ class PPYOLOEHead(nn.Layer):
             else:
                 bbox_pred, bbox_num, _ = self.nms(pred_bboxes, pred_scores)
                 return bbox_pred, bbox_num
+
+
+
+
+
+
+
+
+
+    def forward_train_debug(self, feats, targets):
+
+        anchors, anchor_points, num_anchors_list, stride_tensor = \
+            generate_anchors_for_grid_cell(
+                feats, self.fpn_strides, 
+                self.grid_cell_scale,
+                self.grid_cell_offset)
+
+
+        print("self.fpn_strides : ", self.fpn_strides)
+        print("self.grid_cell_scale : ", self.grid_cell_scale)
+        print("self.grid_cell_offset : ", self.grid_cell_offset)
+
+
+        feature_size0 = int(np.power(feats[0].shape[3], 2))
+        feature_size1 = int(np.power(feats[1].shape[3], 2))
+        feature_size2 = int(np.power(feats[2].shape[3], 2))
+
+
+        print("feats : ")
+        for ind, f in enumerate(feats):
+            print(ind, f.shape)
+
+
+
+        print("targets : ")
+        print(list(targets.keys()))
+
+        anchors_np = anchors.numpy()
+
+        print("anchors : ")
+        print(anchors.shape, np.max(anchors_np), np.min(anchors_np))
+
+        print(anchors[0].numpy())
+        print(anchors[0+1].numpy())
+        print(anchors[0+2].numpy())
+        print(anchors[feature_size0].numpy())
+        print(anchors[feature_size0+1].numpy())
+        print(anchors[feature_size0+2].numpy())
+        print(anchors[feature_size0+feature_size1].numpy())
+        print(anchors[feature_size0+feature_size1+1].numpy())
+        print(anchors[feature_size0+feature_size1+2].numpy())
+
+
+        
+
+        cls_score_list, reg_distri_list = [], []
+
+
+
+
+
+        for i, feat in enumerate(feats):
+
+            avg_feat = F.adaptive_avg_pool2d(feat, (1, 1))
+
+            cls_logit = self.pred_cls[i](
+                    self.stem_cls[i](feat, avg_feat)
+                     + feat)
+
+            reg_distri = self.pred_reg[i](self.stem_reg[i](feat, avg_feat))
+
+
+            # cls and reg
+            cls_score = F.sigmoid(cls_logit)
+
+            cls_score_list.append(cls_score.flatten(2).transpose([0, 2, 1]))
+            reg_distri_list.append(reg_distri.flatten(2).transpose([0, 2, 1]))
+
+
+        cls_score_list = paddle.concat(cls_score_list, axis=1)
+        reg_distri_list = paddle.concat(reg_distri_list, axis=1)
+
+
+
+        return self.get_loss_debug([
+            cls_score_list, reg_distri_list, anchors, anchor_points,
+            num_anchors_list, stride_tensor
+        ], targets)
+
+
+
+
+
+
+
+
+    def get_loss_debug(self, head_outs, gt_meta):
+
+
+        pred_scores, pred_distri, anchors, anchor_points, num_anchors_list, stride_tensor = head_outs
+
+
+        anchor_points_s = anchor_points / stride_tensor
+
+
+        pred_bboxes = self._bbox_decode(anchor_points_s, pred_distri)
+
+
+        gt_labels = gt_meta['gt_class']
+        gt_bboxes = gt_meta['gt_bbox']
+        pad_gt_mask = gt_meta['pad_gt_mask']
+
+
+
+
+        # label assignment
+        if gt_meta['epoch_id'] < self.static_assigner_epoch:
+
+
+            assigned_labels, assigned_bboxes, assigned_scores = \
+                self.static_assigner.forward_debug(
+                    anchors,
+                    num_anchors_list,
+                    gt_labels,
+                    gt_bboxes,
+                    pad_gt_mask,
+                    bg_index=self.num_classes,
+                    pred_bboxes=pred_bboxes.detach() * stride_tensor)
+
+
+            alpha_l = 0.25
+
+
+        else:
+
+            assigned_labels, assigned_bboxes, assigned_scores = \
+                self.assigner.forward_debug(
+                    pred_scores.detach(),
+                    pred_bboxes.detach() * stride_tensor,
+                    anchor_points,
+                    num_anchors_list,
+                    gt_labels,
+                    gt_bboxes,
+                    pad_gt_mask,
+                    bg_index=self.num_classes)
+
+
+            alpha_l = -1
+
+
+
+
+
+        print("assigned_labels : ", assigned_labels.shape)
+        print("assigned_bboxes : ", assigned_bboxes.shape)
+        print("assigned_scores : ", assigned_scores.shape)
+
+
+
+    
+
+        # rescale bbox
+        assigned_bboxes /= stride_tensor
+
+
+
+
+
+
+        # cls loss
+        if self.use_varifocal_loss:
+
+            one_hot_label = F.one_hot(assigned_labels, self.num_classes + 1)[..., :-1]
+            loss_cls = self._varifocal_loss(pred_scores, assigned_scores, one_hot_label)
+
+
+                       
+        else:
+            loss_cls = self._focal_loss(pred_scores, assigned_scores, alpha_l)
+
+
+
+
+
+
+        assigned_scores_sum = assigned_scores.sum()
+        if paddle.distributed.get_world_size() > 1:
+            paddle.distributed.all_reduce(assigned_scores_sum)
+            assigned_scores_sum = paddle.clip(
+                assigned_scores_sum / paddle.distributed.get_world_size(),
+                min=1)
+
+
+
+
+        loss_cls /= assigned_scores_sum
+
+
+
+
+
+        loss_l1, loss_iou, loss_dfl = self._bbox_loss(
+            
+                pred_distri, pred_bboxes, anchor_points_s,
+                assigned_labels, assigned_bboxes, assigned_scores,
+                assigned_scores_sum
+        )
+
+
+
+                
+        loss = self.loss_weight['class'] * loss_cls + \
+               self.loss_weight['iou'] * loss_iou + \
+               self.loss_weight['dfl'] * loss_dfl
+
+
+        out_dict = {
+            'loss': loss,
+            'loss_cls': loss_cls,
+            'loss_iou': loss_iou,
+            'loss_dfl': loss_dfl,
+            'loss_l1': loss_l1,
+        }
+
+        return out_dict
+
+
+
+
+
+
+
+    def forward_debug(self, feats, targets=None):
+        assert len(feats) == len(self.fpn_strides), \
+            "The size of feats is not equal to size of fpn_strides"
+
+        if self.training:
+            return self.forward_train_debug(feats, targets)
+        else:
+            return self.forward_eval(feats)
+
+
+
+    def pure_forward(self, feats):
+
+        cls_score_list, reg_dist_list = [], []
+
+        for i, feat in enumerate(feats):
+            b, _, h, w = feat.shape
+            l = h * w
+            avg_feat = F.adaptive_avg_pool2d(feat, (1, 1))
+            cls_logit = self.pred_cls[i](self.stem_cls[i](feat, avg_feat) +
+                                         feat)
+            reg_dist = self.pred_reg[i](self.stem_reg[i](feat, avg_feat))
+
+            reg_dist = reg_dist.reshape([-1, 4, self.reg_max + 1, l]).transpose(
+                [0, 2, 1, 3])
+
+            reg_dist = self.proj_conv(F.softmax(reg_dist, axis=1)).reshape([-1, 4, h, w])
+
+
+            # cls and reg
+            cls_score = F.sigmoid(cls_logit)
+            cls_score_list.append(cls_score)
+            reg_dist_list.append(reg_dist)
+
+
+        # cls_score_list = paddle.concat(cls_score_list, axis=-1)
+        # reg_dist_list = paddle.concat(reg_dist_list, axis=-1)
+
+        return cls_score_list, reg_dist_list

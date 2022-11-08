@@ -21,6 +21,9 @@ from . import yolov7_head
 from . import rtmdet_head
 from . import ppyoloe_dense_head
 from . import ppyoloe_l1_head
+from . import ppyoloe_l2_head
+from . import ppyoloe_head_double_assigner
+from . import dense_ppyoloe_head
 
 from .yolo_head import *
 from .ppyoloe_head import *
@@ -31,3 +34,7 @@ from .yolov7_head import *
 from .rtmdet_head import *
 from .ppyoloe_dense_head import *
 from .ppyoloe_l1_head import *
+from .ppyoloe_l2_head import *
+from .ppyoloe_head_double_assigner import *
+from .dense_ppyoloe_head import *
+
