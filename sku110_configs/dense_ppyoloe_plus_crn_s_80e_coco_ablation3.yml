@@ -67,8 +67,8 @@ DensePPYOLOEHead:
 
   assigner:
     name: DenseTaskAlignedAssigner
-    strict_topk: 5
-    loose_topk: 13
+    strict_topk: 9
+    loose_topk: 9
     alpha: 1.0
     beta: 6.0
     center_radius: 1.5
