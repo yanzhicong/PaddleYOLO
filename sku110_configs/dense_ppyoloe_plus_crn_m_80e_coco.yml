@@ -1,9 +1,27 @@
 _BASE_: [
   './sku110k.yml',
   './runtime.yml',
-  './_base_/optimizer_80e.yml',
 ]
 
+
+epoch: 80
+
+LearningRate:
+  base_lr: 0.001
+  schedulers:
+    - !CosineDecay
+      max_epochs: 96
+    - !LinearWarmup
+      start_factor: 0.
+      epochs: 5
+
+OptimizerBuilder:
+  optimizer:
+    momentum: 0.9
+    type: Momentum
+  regularizer:
+    factor: 0.0005
+    type: L2
 
 architecture: YOLOv3
 norm_type: sync_bn
@@ -16,7 +34,6 @@ YOLOv3:
   neck: CustomCSPPAN
   yolo_head: DensePPYOLOEHead
   post_process: ~
-
 
 CSPResNet:
   layers: [3, 6, 6, 3]
@@ -33,15 +50,14 @@ CustomCSPPAN:
   spp: true
   use_alpha: True
 
-
 DensePPYOLOEHead:
   fpn_strides: [32, 16, 8]
   grid_cell_scale: 5.0
   grid_cell_offset: 0.5
-  reg_range: [-2, 14]
+  reg_range: [0, 16]
   static_assigner_epoch: 3
   use_varifocal_loss: True
-  use_probiou_loss: True
+  use_probiou_loss: False
   
   loss_weight: {class: 1.0, iou: 2.5, dfl: 0.5, l1: 0.0, l2: 0.0, cl1: 2.0, cl2: 0.0}
 
@@ -51,10 +67,11 @@ DensePPYOLOEHead:
 
   assigner:
     name: DenseTaskAlignedAssigner
-    strict_topk: 5
+    strict_topk: 13
     loose_topk: 13
     alpha: 1.0
     beta: 6.0
+    center_radius: 0
 
   nms:
     name: MultiClassNMS
@@ -88,7 +105,6 @@ TrainReader:
   use_shared_memory: true
   collate_batch: true
 
-
 EvalReader:
   sample_transforms:
     - Decode: {}
@@ -108,7 +124,6 @@ TestReader:
     - Permute: {}
   batch_size: 1
   fuse_normalize: True
-
 
 
 log_iter: 10
