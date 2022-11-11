@@ -67,11 +67,11 @@ DensePPYOLOEHead:
 
   assigner:
     name: DenseTaskAlignedAssigner
-    strict_topk: 9
-    loose_topk: 9
+    strict_topk: 13
+    loose_topk: 13
     alpha: 1.0
     beta: 6.0
-    center_radius: 0.0
+    center_radius: 0
 
   nms:
     name: MultiClassNMS
@@ -128,7 +128,7 @@ TestReader:
 
 log_iter: 10
 snapshot_epoch: 20
-weights: sku110_output/dense_ppyoloe_plus_crn_s_80e_coco_ablation3/model_final
+weights: sku110_output/dense_ppyoloe_plus_crn_s_80e_coco_ablation2/model_final
 
 pretrain_weights: https://bj.bcebos.com/v1/paddledet/models/pretrained/ppyoloe_crn_s_obj365_pretrained.pdparams
 depth_mult: 0.33
