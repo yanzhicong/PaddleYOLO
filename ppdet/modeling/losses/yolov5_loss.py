@@ -62,8 +62,8 @@ class YOLOv5Loss(nn.Layer):
         self.cls_neg_label = 0.5 * eps
 
         self.downsample_ratios = downsample_ratios
-        self.bias = bias
-        self.off = paddle.to_tensor(
+        self.bias = bias  # named 'g' in torch yolov5
+        self.off = np.array(
             [
                 [0, 0],
                 [1, 0],
@@ -71,34 +71,32 @@ class YOLOv5Loss(nn.Layer):
                 [-1, 0],
                 [0, -1],  # j,k,l,m
             ],
-            dtype='float32') * self.bias
+            dtype=np.float32) * bias  # offsets
         self.anchor_t = anchor_t
 
     def build_targets(self, outputs, targets, anchors):
-        anchors = anchors.numpy()
-        gt_nums = [len(bbox) for bbox in targets['gt_bbox']]
+        # targets['gt_class'] [bs, max_gt_nums, 1]
+        # targets['gt_bbox'] [bs, max_gt_nums, 4]
+        # targets['pad_gt_mask'] [bs, max_gt_nums, 1]
+        gt_nums = targets['pad_gt_mask'].sum(1).squeeze(-1).numpy()
         nt = int(sum(gt_nums))
+        anchors = anchors.numpy()
         na = anchors.shape[1]  # not len(anchors)
         tcls, tbox, indices, anch = [], [], [], []
 
         gain = np.ones(7, dtype=np.float32)  # normalized to gridspace gain
-        ai = np.tile(
-            np.arange(
-                na, dtype=np.float32).reshape(na, 1),
-            [1, nt])  # same as .repeat_interleave(nt)
+        ai = np.tile(np.arange(na, dtype=np.float32).reshape(na, 1), [1, nt])
 
         batch_size = outputs[0].shape[0]
         gt_labels = []
         for idx in range(batch_size):
-            gt_num = gt_nums[idx]
+            gt_num = int(gt_nums[idx])
             if gt_num == 0:
                 continue
-            gt_bbox = targets['gt_bbox'][idx][:gt_num]
-            gt_class = targets['gt_class'][idx][:gt_num] * 1.0
+            gt_bbox = targets['gt_bbox'][idx][:gt_num].numpy()
+            gt_class = targets['gt_class'][idx][:gt_num].numpy() * 1.0
             img_idx = np.repeat(np.array([[idx]]), gt_num, axis=0)
-            gt_labels.append(
-                np.concatenate(
-                    (img_idx, gt_class, gt_bbox), axis=-1))
+            gt_labels.append(np.concatenate((img_idx, gt_class, gt_bbox), -1))
         if (len(gt_labels)):
             gt_labels = np.concatenate(gt_labels)
         else:
@@ -106,16 +104,7 @@ class YOLOv5Loss(nn.Layer):
 
         targets_labels = np.concatenate((np.tile(
             np.expand_dims(gt_labels, 0), [na, 1, 1]), ai[:, :, None]), 2)
-        g = 0.5  # bias
-        off = np.array(
-            [
-                [0, 0],
-                [1, 0],
-                [0, 1],
-                [-1, 0],
-                [0, -1],  # j,k,l,m
-            ],
-            dtype=np.float32) * g  # offsets
+        g = self.bias  # 0.5
 
         for i in range(len(anchors)):
             anchor = np.array(anchors[i]) / self.downsample_ratios[i]
@@ -137,7 +126,7 @@ class YOLOv5Loss(nn.Layer):
                 l, m = ((gxi % 1 < g) & (gxi > 1)).T
                 j = np.stack((np.ones_like(j), j, k, l, m))
                 t = np.tile(t, [5, 1, 1])[j]
-                offsets = (np.zeros_like(gxy)[None] + off[:, None])[j]
+                offsets = (np.zeros_like(gxy)[None] + self.off[:, None])[j]
             else:
                 t = targets_labels[0]
                 offsets = 0
@@ -152,10 +141,9 @@ class YOLOv5Loss(nn.Layer):
             # Append
             a = t[:, 6].astype(np.int64)  # anchor indices
             gj, gi = gj.clip(0, gain[3] - 1), gi.clip(0, gain[2] - 1)
-            indices.append((paddle.to_tensor(b), paddle.to_tensor(a),
-                            paddle.to_tensor(
-                                gj, dtype=paddle.int64), paddle.to_tensor(
-                                    gi, dtype=paddle.int64)))
+            indices.append(
+                (paddle.to_tensor(b), paddle.to_tensor(a),
+                 paddle.to_tensor(gj, 'int64'), paddle.to_tensor(gi, 'int64')))
             tbox.append(
                 paddle.to_tensor(
                     np.concatenate((gxy - gij, gwh), 1), dtype=paddle.float32))
@@ -171,31 +159,29 @@ class YOLOv5Loss(nn.Layer):
         loss_box = paddle.to_tensor([0.])
         loss_cls = paddle.to_tensor([0.])
         if n:
-            ps = pi.gather_nd(
-                paddle.concat([
-                    b.reshape([-1, 1]), a.reshape([-1, 1]), gj.reshape([-1, 1]),
-                    gi.reshape([-1, 1])
-                ], 1))
+            mask = paddle.stack([b, a, gj, gi], 1)
+            ps = pi.gather_nd(mask)
             # Regression
             pxy = F.sigmoid(ps[:, :2]) * 2 - 0.5
             pwh = (F.sigmoid(ps[:, 2:4]) * 2)**2 * t_anchor
-            pbox = paddle.concat((pxy, pwh), 1)  # predicted box # [21, 4]
+            pbox = paddle.concat((pxy, pwh), 1)
             iou = bbox_iou(pbox.T, t_box.T, x1y1x2y2=False, ciou=True)
-            # iou.stop_gradient = True
             loss_box = (1.0 - iou).mean()
 
             # Objectness
             score_iou = paddle.cast(iou.detach().clip(0), tobj.dtype)
             with paddle.no_grad():
-                tobj[b, a, gj, gi] = (1.0 - self.gr
-                                      ) + self.gr * score_iou  # iou ratio
+                x = paddle.gather_nd(tobj, mask)
+                tobj = paddle.scatter_nd_add(
+                    tobj, mask, (1.0 - self.gr) + self.gr * score_iou - x)
 
             # Classification
-            t = paddle.full_like(ps[:, 5:], self.cls_neg_label)
-            t[range(n), t_cls] = self.cls_pos_label
-            loss_cls = self.BCEcls(ps[:, 5:], t)
+            if self.num_classes > 1:  # cls loss (only if multiple classes)
+                t = paddle.full_like(ps[:, 5:], self.cls_neg_label)
+                t[range(n), t_cls] = self.cls_pos_label
+                loss_cls = self.BCEcls(ps[:, 5:], t)
 
-        obji = self.BCEobj(pi[:, :, :, :, 4], tobj)  # [4, 3, 80, 80]
+        obji = self.BCEobj(pi[:, :, :, :, 4], tobj)  # [bs, 3, h, w]
 
         loss_obj = obji * balance
 
@@ -205,8 +191,6 @@ class YOLOv5Loss(nn.Layer):
         return loss
 
     def forward(self, inputs, targets, anchors):
-        assert len(inputs) == len(anchors)
-        assert len(inputs) == len(self.downsample_ratios)
         yolo_losses = dict()
         tcls, tbox, indices, anch = self.build_targets(inputs, targets, anchors)
 
