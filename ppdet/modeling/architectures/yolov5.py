@@ -50,6 +50,7 @@ class YOLOv5(BaseArch):
         self.post_process = post_process
         self.for_mot = for_mot
 
+
     @classmethod
     def from_config(cls, cfg, *args, **kwargs):
         # backbone
@@ -74,7 +75,11 @@ class YOLOv5(BaseArch):
         neck_feats = self.neck(body_feats, self.for_mot)
 
         if self.training:
-            yolo_losses = self.yolo_head(neck_feats, self.inputs)
+            if self.inputs.get('is_self_distill', False):
+                yolo_losses = self.yolo_head(neck_feats, self.inputs, 
+                    self.inputs['teacher_outputs'], self.inputs['epoch_id'], self.inputs['num_epochs'])
+            else:
+                yolo_losses = self.yolo_head(neck_feats, self.inputs)
             return yolo_losses
         else:
             yolo_head_outs = self.yolo_head(neck_feats)
@@ -93,3 +98,16 @@ class YOLOv5(BaseArch):
 
     def get_pred(self):
         return self._forward()
+
+    def get_loss_distill(self, t_outputs):
+        body_feats = self.backbone(self.inputs)
+        neck_feats = self.neck(body_feats, self.for_mot)
+        # t_neck_feats, t_cls_score_list, t_reg_dist_list, t_anchor_points, t_stride_tensor = t_outputs
+        yolo_losses = self.yolo_head(neck_feats, self.inputs, t_outputs, self.inputs['epoch_id'], self.inputs['num_epochs'])
+        return yolo_losses
+
+    def get_feats_and_raw_outputs(self, inputs):
+        body_feats = self.backbone(inputs)
+        neck_feats = self.neck(body_feats, self.for_mot)
+        cls_score_list, reg_dist_list, anchor_points, stride_tensor = self.yolo_head.forward_raw(neck_feats)
+        return neck_feats, cls_score_list, reg_dist_list, anchor_points, stride_tensor

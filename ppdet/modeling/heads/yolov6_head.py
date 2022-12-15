@@ -34,7 +34,7 @@ __all__ = ['EffiDeHead']
 class EffiDeHead(nn.Layer):
     __shared__ = [
         'num_classes', 'eval_size', 'trt', 'exclude_nms',
-        'exclude_post_process', 'self_distill'
+        'exclude_post_process', 'self_distill', 'distill_feat',
     ]
     __inject__ = ['static_assigner', 'assigner', 'nms']
 
@@ -64,11 +64,17 @@ class EffiDeHead(nn.Layer):
             exclude_nms=False,
             exclude_post_process=False,
             self_distill=False,
+            distill_feat=False,
             distill_weight={
                 'cls': 1.0,
                 'dfl': 1.0,
             },
+            distill_temperature=20,
             print_l1_loss=True):
+
+
+
+
         super(EffiDeHead, self).__init__()
         assert len(in_channels) > 0, "len(in_channels) should > 0"
         self.in_channels = in_channels
@@ -98,7 +104,9 @@ class EffiDeHead(nn.Layer):
 
         # for self-distillation
         self.self_distill = self_distill
+        self.distill_feat = distill_feat
         self.distill_weight = distill_weight
+        self.distill_temperature = distill_temperature
 
         # stem
         self.stem_conv = nn.LayerList()
@@ -156,6 +164,7 @@ class EffiDeHead(nn.Layer):
             self.anchor_points = anchor_points
             self.stride_tensor = stride_tensor
 
+
     def forward_train(self, feats, targets):
         anchors, anchor_points, num_anchors_list, stride_tensor = \
             generate_anchors_for_grid_cell(
@@ -179,6 +188,34 @@ class EffiDeHead(nn.Layer):
             num_anchors_list, stride_tensor
         ], targets)
 
+
+
+    def forward_train_with_distill(self, feats, targets, t_outputs, epoch_num, max_epoch):
+        anchors, anchor_points, num_anchors_list, stride_tensor = \
+            generate_anchors_for_grid_cell(
+                feats, self.fpn_strides, self.grid_cell_scale,
+                self.grid_cell_offset)
+
+        cls_score_list, reg_distri_list = [], []
+        for i, feat in enumerate(feats):
+            feat = self.stem_conv[i](feat)
+            cls_logit = self.pred_cls[i](feat)
+            reg_distri = self.pred_reg[i](feat)
+            # cls and reg
+            cls_score = F.sigmoid(cls_logit)
+            cls_score_list.append(cls_score.flatten(2).transpose([0, 2, 1]))
+            reg_distri_list.append(reg_distri.flatten(2).transpose([0, 2, 1]))
+        cls_score_list = paddle.concat(cls_score_list, axis=1)
+        reg_distri_list = paddle.concat(reg_distri_list, axis=1)
+
+        return self.get_loss_with_distill([
+            feats, cls_score_list, reg_distri_list, anchors, anchor_points,
+            num_anchors_list, stride_tensor, 
+        ], targets, t_outputs, self.distill_temperature, epoch_num, max_epoch)
+
+
+
+
     def _generate_anchors(self, feats=None, dtype='float32'):
         # just use in eval time
         anchor_points = []
@@ -200,6 +237,7 @@ class EffiDeHead(nn.Layer):
         anchor_points = paddle.concat(anchor_points)
         stride_tensor = paddle.concat(stride_tensor)
         return anchor_points, stride_tensor
+
 
     def forward_eval(self, feats):
         if self.eval_size:
@@ -223,18 +261,43 @@ class EffiDeHead(nn.Layer):
             reg_dist_list.append(reg_dist.reshape([b, 4, l]))
 
         cls_score_list = paddle.concat(cls_score_list, axis=-1)
-        reg_dist_list = paddle.concat(reg_dist_list, axis=-1)
+        reg_distri_list = paddle.concat(reg_distri_list, axis=-1)
 
-        return cls_score_list, reg_dist_list, anchor_points, stride_tensor
+        return cls_score_list, reg_distri_list, anchor_points, stride_tensor
 
-    def forward(self, feats, targets=None):
+
+    def forward_raw(self, feats):
+        if self.eval_size:
+            anchor_points, stride_tensor = self.anchor_points, self.stride_tensor
+        else:
+            anchor_points, stride_tensor = self._generate_anchors(feats)
+
+        cls_score_list, reg_distri_list = [], []
+        for i, feat in enumerate(feats):
+            feat = self.stem_conv[i](feat)
+            cls_logit = self.pred_cls[i](feat)
+            reg_distri = self.pred_reg[i](feat)
+            # cls and reg
+            cls_score = F.sigmoid(cls_logit)
+            cls_score_list.append(cls_score.flatten(2).transpose([0, 2, 1]))
+            reg_distri_list.append(reg_distri.flatten(2).transpose([0, 2, 1]))
+        cls_score_list = paddle.concat(cls_score_list, axis=1)
+        reg_distri_list = paddle.concat(reg_distri_list, axis=1)
+
+        return cls_score_list, reg_distri_list, anchor_points, stride_tensor
+
+
+    def forward(self, feats, targets=None, t_outputs=None, epoch_num=None, max_epoch=None):
         assert len(feats) == len(self.fpn_strides), \
             "The size of feats is not equal to size of fpn_strides"
-
         if self.training:
-            return self.forward_train(feats, targets)
+            if self.self_distill:
+                return self.forward_train_with_distill(feats, targets, t_outputs, epoch_num, max_epoch)
+            else:
+                return self.forward_train(feats, targets)
         else:
             return self.forward_eval(feats)
+
 
     @staticmethod
     def _varifocal_loss(pred_score, gt_score, label, alpha=0.75, gamma=2.0):
@@ -268,6 +331,7 @@ class EffiDeHead(nn.Layer):
         loss_right = F.cross_entropy(
             pred_dist, target_right, reduction='none') * weight_right
         return (loss_left + loss_right).mean(-1, keepdim=True)
+
 
     def _bbox_loss(self, pred_dist, pred_bboxes, anchor_points, assigned_labels,
                    assigned_bboxes, assigned_scores, assigned_scores_sum):
@@ -311,6 +375,111 @@ class EffiDeHead(nn.Layer):
             loss_iou = paddle.zeros([1])
             loss_dfl = pred_dist.sum() * 0.
         return loss_l1, loss_iou, loss_dfl
+
+
+
+    def _bbox_loss_with_distill(self, pred_dist, pred_bboxes, 
+                t_pred_dist, t_pred_bboxes, temperature,
+                anchor_points, assigned_labels,
+                   assigned_bboxes, assigned_scores, assigned_scores_sum):
+        # select positive samples mask
+        mask_positive = (assigned_labels != self.num_classes)
+        num_pos = mask_positive.sum()
+        # pos/neg loss
+        if num_pos > 0:
+            # iou loss
+            bbox_mask = mask_positive.unsqueeze(-1).tile([1, 1, 4])
+            pred_bboxes_pos = paddle.masked_select(pred_bboxes,
+                                                   bbox_mask).reshape([-1, 4])
+            # t_pred_bboxes_pos = paddle.masked_select(t_pred_bboxes,
+                                                    # bbox_mask).reshape([-1, 4])
+
+            assigned_bboxes_pos = paddle.masked_select(
+                assigned_bboxes, bbox_mask).reshape([-1, 4])
+            bbox_weight = paddle.masked_select(
+                assigned_scores.sum(-1), mask_positive).unsqueeze(-1)
+            loss_iou = self.iou_loss(pred_bboxes_pos,
+                                     assigned_bboxes_pos) * bbox_weight
+            loss_iou = loss_iou.sum() / assigned_scores_sum
+
+            # l1 loss just see the convergence, same in PPYOLOEHead
+            loss_l1 = F.l1_loss(pred_bboxes_pos, assigned_bboxes_pos)
+
+
+            # dfl loss ### diff with PPYOLOEHead
+            if self.use_dfl:
+
+                dist_mask = mask_positive.unsqueeze(-1).tile(
+                    [1, 1, (self.reg_max + 1) * 4])
+                pred_dist_pos = paddle.masked_select(
+                    pred_dist, dist_mask).reshape([-1, 4, self.reg_max + 1])
+                t_pred_dist_pos = paddle.masked_select(
+                    t_pred_dist, dist_mask).reshape([-1, 4, self.reg_max + 1])
+
+                assigned_ltrb = self._bbox2distance(anchor_points,
+                                                    assigned_bboxes)
+                assigned_ltrb_pos = paddle.masked_select(
+                    assigned_ltrb, bbox_mask).reshape([-1, 4])
+
+                loss_dfl = self._df_loss(pred_dist_pos,
+                                         assigned_ltrb_pos) * bbox_weight
+                
+                d_loss_dfl = self._distill_dfl_loss(pred_dist_pos, t_pred_dist_pos, temperature) * bbox_weight
+
+                if assigned_scores_sum != 0:
+                    loss_dfl = loss_dfl.sum() / assigned_scores_sum
+                    d_loss_dfl = d_loss_dfl.sum() / assigned_scores_sum
+                else:
+                    loss_dfl = loss_dfl.sum()
+                    d_loss_dfl = d_loss_dfl.sum()
+
+            else:
+                loss_dfl = pred_dist.sum() * 0.
+                d_loss_dfl = pred_dist.sum() * 0.
+        else:
+            loss_l1 = paddle.zeros([1])
+            loss_iou = paddle.zeros([1])
+            loss_dfl = pred_dist.sum() * 0.
+        return loss_l1, loss_iou, loss_dfl, d_loss_dfl
+
+
+
+
+    def _distill_cls_loss(self, logits_student, logits_teacher, num_classes, temperature=20):
+        logits_student = logits_student.reshape((-1, num_classes))
+        logits_teacher = logits_teacher.reshape((-1, num_classes))
+        pred_student = F.softmax(logits_student / temperature, axis=1)
+        pred_teacher = F.softmax(logits_teacher / temperature, axis=1)
+        log_pred_student = paddle.log(pred_student)
+
+        d_loss_cls = F.kl_div(log_pred_student, pred_teacher, reduction="sum")
+        d_loss_cls *= temperature ** 2
+        return d_loss_cls
+
+
+    def _distill_dfl_loss(self, logits_student, logits_teacher, temperature=20):
+        logits_student = logits_student.reshape((-1, self.reg_max + 1))
+        logits_teacher = logits_teacher.reshape((-1, self.reg_max + 1))
+        pred_student = F.softmax(logits_student / temperature, axis=1)
+        pred_teacher = F.softmax(logits_teacher / temperature, axis=1)
+        log_pred_student = paddle.log(pred_student)
+
+        d_loss_dfl = F.kl_div(log_pred_student, pred_teacher, reduction="none").sum(1).mean()
+        d_loss_dfl *= temperature ** 2
+        return d_loss_dfl
+
+
+    def _distill_cw_loss(self, s_feats, t_feats, temperature=1):
+        loss_cw = 0.0
+        for s_feat, t_feat in zip(s_feats, t_feats):
+            N, C, H, W = s_feat.shape
+            loss_cw += F.kl_div(F.log_softmax(s_feat.reshape((N, C, H * W)) / temperature, axis=2),
+                            F.log_softmax(t_feat.reshape((N, C, H * W)).detach() / temperature, axis=2),
+                            reduction='sum',
+                            log_target=True) * (temperature * temperature)/ (N * C)
+        return loss_cw
+
+
 
     def get_loss(self, head_outs, gt_meta):
         pred_scores, pred_distri, anchors,\
@@ -391,6 +560,129 @@ class EffiDeHead(nn.Layer):
             # just see convergence
             out_dict.update({'loss_l1': loss_l1})
         return out_dict
+
+
+    def get_loss_with_distill(self, head_outs, gt_meta, t_outputs, 
+        temperature, epoch_num, max_epoch):
+        neck_feats, pred_scores, pred_distri, anchors,\
+        anchor_points, num_anchors_list, stride_tensor = head_outs
+
+        # []
+        t_neck_feats, t_pred_scores, t_pred_distri, \
+        t_anchor_points, t_stride_tensor = t_outputs
+
+        # print("pred_scores : ", pred_scores.shape)
+        # print("pred_distri : ", pred_distri.shape)
+        # print("t_pred_scores : ", t_pred_scores.shape)        
+        # print("t_pred_distri : ", t_pred_distri.shape)
+
+        anchor_points_s = anchor_points / stride_tensor
+        pred_bboxes = self._bbox_decode(anchor_points_s, pred_distri)
+
+        t_anchor_points_s = t_anchor_points / t_stride_tensor
+        t_pred_bboxes = self._bbox_decode(t_anchor_points_s, t_pred_distri)
+
+
+        gt_labels = gt_meta['gt_class']
+        gt_bboxes = gt_meta['gt_bbox']
+        pad_gt_mask = gt_meta['pad_gt_mask']
+        # label assignment
+        if gt_meta['epoch_id'] < self.static_assigner_epoch:
+            assigned_labels, assigned_bboxes, assigned_scores = \
+                self.static_assigner(
+                    anchors,
+                    num_anchors_list,
+                    gt_labels,
+                    gt_bboxes,
+                    pad_gt_mask,
+                    bg_index=self.num_classes,
+                    pred_bboxes=pred_bboxes.detach() * stride_tensor)
+        else:
+            assigned_labels, assigned_bboxes, assigned_scores = \
+                self.assigner(
+                pred_scores.detach(),
+                pred_bboxes.detach() * stride_tensor,
+                anchor_points,
+                num_anchors_list,
+                gt_labels,
+                gt_bboxes,
+                pad_gt_mask,
+                bg_index=self.num_classes)
+        # rescale bbox
+        assigned_bboxes /= stride_tensor
+
+        # cls loss: varifocal_loss
+        one_hot_label = F.one_hot(assigned_labels,
+                                  self.num_classes + 1)[..., :-1]
+        loss_cls = self._varifocal_loss(pred_scores, assigned_scores,
+                                        one_hot_label)
+        assigned_scores_sum = assigned_scores.sum()
+        if paddle.distributed.get_world_size() > 1:
+            paddle.distributed.all_reduce(assigned_scores_sum)
+            assigned_scores_sum = paddle.clip(
+                assigned_scores_sum / paddle.distributed.get_world_size(),
+                min=1)
+        loss_cls /= assigned_scores_sum
+
+        # bbox loss
+        loss_l1, loss_iou, loss_dfl, d_loss_dfl = \
+            self._bbox_loss_with_distill(pred_distri, pred_bboxes, 
+                            t_pred_distri, t_pred_bboxes, temperature,
+                            anchor_points_s,
+                            assigned_labels, assigned_bboxes, assigned_scores,
+                            assigned_scores_sum)
+
+        d_loss_cls = self._distill_cls_loss(pred_scores, t_pred_scores, self.num_classes, temperature)
+        
+        if self.distill_feat:
+            d_loss_cw = self._distill_cw_loss(neck_feats, t_neck_feats)
+        else:
+            d_loss_cw = paddle.to_tensor(0.0, place=neck_feats[0].place)
+
+        import math
+        distill_weightdecay = ((1 - math.cos(epoch_num * math.pi / max_epoch)) / 2) * (0.01 - 1) + 1
+        d_loss_dfl *= distill_weightdecay
+        d_loss_cls *= distill_weightdecay
+        d_loss_cw *= distill_weightdecay
+
+        loss_cls_all = loss_cls + d_loss_cls * self.distill_weight['cls']
+        loss_dfl_all = loss_dfl + d_loss_dfl * self.distill_weight['dfl']
+
+        if self.use_dfl:
+            loss = self.loss_weight['cls'] * loss_cls_all + \
+                self.loss_weight['iou'] * loss_iou + \
+                self.loss_weight['dfl'] * loss_dfl_all + \
+                self.loss_weight['cwd'] * d_loss_cw
+            num_gpus = gt_meta.get('num_gpus', 8)
+            out_dict = {
+                'loss': loss * num_gpus,
+                'loss_cls': loss_cls_all,
+                'loss_iou': loss_iou,
+                'loss_dfl': loss_dfl_all,
+                'loss_cwd': d_loss_cw,
+            }
+        else:
+            loss = self.loss_weight['cls'] * loss_cls_all + \
+                self.loss_weight['iou'] * loss_iou + \
+                self.loss_weight['cw'] * d_loss_cw
+            num_gpus = gt_meta.get('num_gpus', 8)
+            out_dict = {
+                'loss': loss * num_gpus,
+                'loss_cls': loss_cls,
+                'loss_iou': loss_iou,
+                'loss_cwd': d_loss_cw,
+            }
+
+        # for k, v in out_dict.items():
+        #     print(k, v.shape)
+
+        if self.print_l1_loss:
+            # just see convergence
+            out_dict.update({'loss_l1': loss_l1})
+        return out_dict
+
+
+
 
     def post_process(self, head_outs, im_shape, scale_factor):
         pred_scores, pred_dist, anchor_points, stride_tensor = head_outs

@@ -167,7 +167,10 @@ class Trainer(object):
 
         self.self_distill = self.cfg.get('self_distill', False)
         if self.self_distill:
-            self.teacher_model = self.model
+            self.teacher_model = create(cfg.architecture)
+            for name, layer in self.teacher_model.named_sublayers():
+                if isinstance(layer, paddle.nn.BatchNorm2D):
+                    layer.track_running_stats = False
 
         self._nranks = dist.get_world_size()
         self._local_rank = dist.get_rank()
@@ -278,6 +281,8 @@ class Trainer(object):
             assert isinstance(m, Metric), \
                     "metrics shoule be instances of subclass of Metric"
         self._metrics.extend(metrics)
+
+
 
     def load_weights(self, weights):
         if self.is_loaded_weights:
@@ -392,6 +397,7 @@ class Trainer(object):
                 self._compose_callback.on_step_begin(self.status)
                 data['epoch_id'] = epoch_id
                 data['num_gpus'] = self._nranks
+                data['num_epochs'] = self.cfg.epoch
 
                 if self.use_amp:
                     with paddle.amp.auto_cast(
@@ -400,14 +406,30 @@ class Trainer(object):
                             custom_black_list=self.custom_black_list,
                             level=self.amp_level):
                         # model forward
+
+                        if self.self_distill:
+                            with paddle.no_grad():
+                                t_outputs = self.teacher_model.get_feats_and_raw_outputs(data)
+                            data['is_self_distill'] = True
+                            data['teacher_outputs'] = t_outputs
                         outputs = model(data)
                         loss = outputs['loss']
+
                     scaled_loss = scaler.scale(loss)
                     scaled_loss.backward()
                     # in dygraph mode, optimizer.minimize is equal to optimizer.step
                     scaler.minimize(self.optimizer, scaled_loss)
                 else:
+
                     # model forward
+                    if self.self_distill:
+                        with paddle.no_grad():
+                            t_outputs = self.teacher_model.get_feats_and_raw_outputs(data)
+                        data['is_self_distill'] = True
+                        data['teacher_outputs'] = t_outputs
+                        # print(list(data.keys()))
+                        # outputs = model.get_loss_distill(data, t_outputs)
+                    # else:
                     outputs = model(data)
                     loss = outputs['loss']
                     loss.backward()

@@ -29,7 +29,7 @@ EffiDeHead:
 
 # Step 1: Training the base model, get 48.0+ mAP
 TrainReader:
-  batch_size: 32 # total batch_size = 32 * gpu_num
+  batch_size: 16 # total batch_size = 32 * gpu_num
 
 EvalReader:
   batch_size: 4
@@ -42,4 +42,6 @@ EvalReader:
 # pretrain_weights: output/yolov6_m_300e_coco/model_final.pdparams
 # save_dir: output_distill
 # weights: output_distill/yolov6_m_300e_coco/model_final
-#
+
+
+
