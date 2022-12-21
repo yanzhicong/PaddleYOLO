@@ -62,7 +62,7 @@ logger = setup_logger('train')
 
 
 
-# CUDA_VISIBLE_DEVICES=1 python3.7 tools/debug.py -c sku110_configs/ppyoloe_plus_crn_s_80e_coco_large_size_tal_topk_5.yml -o weights=./sku110_output/ppyoloe_plus_crn_s_80e_coco_large_size_tal_topk_5/model_final.pdparams
+# CUDA_VISIBLE_DEVICES=1 python3.7 tools/debug.py -c sku110_configs/ppyoloe_plus_crn_s_80e_coco_large_size.yml -o weights=./sku110_output/ppyoloe_plus_crn_s_80e_coco_large_size/model_final.pdparams
 
 
 
@@ -312,12 +312,10 @@ def draw_bbox_highlight(image, name, bboxes, color, highlight=1.0):
     """
 
 
-    print("draw_bbox_hightlight, ", len(bboxes))
-
+    # print("draw_bbox_hightlight, ", len(bboxes))
     # highlight bbox areas in input image
     # image = np.asarray(image).astype(np.uint8)
     # image2 = (image.astype(np.float) * highlight).astype(np.uint8)
-    
     # for dt in np.array(bboxes):
     #     if im_id != dt['image_id']:
     #         continue
@@ -449,6 +447,9 @@ def get_image_annos(anno_filepath):
     # grouped_bboxes = {os.path.join("/workspace/dataset/SKU110K_fixed/images", fn):[] for fn in }
 
     return catid2name, bboxes, img2ind, grouped_bboxes
+
+
+
 
 
 
@@ -591,8 +592,6 @@ class DebugPredictWrapper(Trainer):
 
 
 
-
-
                 if isinstance(draw_threshold, list):
                     for j, t in enumerate(draw_threshold):
 
@@ -682,8 +681,6 @@ class DebugPredictWrapper(Trainer):
 
 
 
-
-
 def run(FLAGS, cfg):
     # build trainer
     trainer = DebugPredictWrapper(cfg, mode='test')
@@ -749,7 +746,7 @@ def run(FLAGS, cfg):
     #     grouped_bboxes,
     #     draw_threshold=0.3,
     #     output_dir=os.path.join(FLAGS.output_dir, "severe_fp_0_3"),
-    #     visualize=False)
+    #     visualize=True)
 
     # images = [
     #      (133, '/workspace/dataset/SKU110K_fixed/images/val_577.jpg'),
@@ -791,7 +788,7 @@ def run(FLAGS, cfg):
     #     grouped_bboxes,
     #     draw_threshold=0.3,
     #     output_dir=os.path.join(FLAGS.output_dir, "severe_mp_0_3"),
-    #     visualize=False)
+    #     visualize=True)
 
 
 
@@ -870,15 +867,12 @@ if __name__ == '__main__':
 # num_missed_gt :               [3072,    3072,    3112,    3793,    5716,   7918,   10620]
 # num_false_positive :          [108948,  106873,  89566,   44830,   18687,  9621,   6074]
 
-
-
 # PPYoloE CRN + S
 # train input size 640
 # test  input size 640
 # num_matched_gt :              [86728,   86724,   86603,   85359,   83114,   79903,  75894]
 # num_missed_gt :               [4240,    4244,    4365,    5609,    7854,    11065,  15074]
 # num_false_positive :          [232640,  223951,  162040,  64030,   26970,   12825,  6827]
-
 
 # PPYoloE CRN + S
 # train input size 640
@@ -895,9 +889,6 @@ if __name__ == '__main__':
 # num_matched_gt :               [87121,  87121,   87095,   86277,   83878,   80403,  76303]
 # num_missed_gt :                [3847,   3847,    3873,    4691,    7090,    10565,  14665]
 # num_false_positive :           [144841, 143791,  129610,  62781,   24818,   11597,  6338]
-
-
-
 
 
 

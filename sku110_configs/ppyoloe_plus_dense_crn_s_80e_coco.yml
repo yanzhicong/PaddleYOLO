@@ -41,6 +41,7 @@ CustomCSPPAN:
   act: 'swish'
   spp: true
 
+
 PPYOLOEDenseHead:
   fpn_strides: [32, 16, 8]
   grid_cell_scale: 5.0
